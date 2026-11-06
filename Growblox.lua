@@ -1,6 +1,6 @@
--- Unpacked by ZeroVector: the script inside the packed file, as it was written
+-- Unpacked by peler: the script inside the packed file, as it was written
 --[[
-    Fian792  v1.1.0  (untuk Growblox versi ByteNet)
+    Epen6969  v1.1.0  (untuk Growblox versi ByteNet)
     Script tester Growtopia (Roblox) dengan UI WindUI.
 
     Fitur:
@@ -15,7 +15,7 @@
       - Bonus       : auto claim quest & auto redeem code
       - Growscan    : daftar Floating Items & World Blocks
       - Config      : pengaturan tersimpan otomatis & dimuat saat execute
-      - Watermark   : nama Fian792 beranimasi (selalu aktif, hanya di layar sendiri)
+      - Watermark   : nama Epen6969 beranimasi (selalu aktif, hanya di layar sendiri)
 
     Catatan:
       - Semua aksi pakai fungsi asli game (place, pukul, ambil drop), bukan klik layar.
@@ -28,14 +28,14 @@
 -- SESI: jalankan ulang script = sesi lama dibersihkan dulu
 ---------------------------------------------------------------------
 local G = (getgenv and getgenv()) or _G
-for _, key in ipairs({ "__Alfian", "__GTFarm" }) do -- __GTFarm = nama versi lama
+for _, key in ipairs({ "__EpenVn", "__GTFarm" }) do -- __GTFarm = nama versi lama
     if G[key] and G[key].Cleanup then pcall(G[key].Cleanup) end
     G[key] = nil
 end
 local Session = {}
-G.__Alfian = Session
+G.__EpenVn = Session
 local function alive()
-    return G.__Alfian == Session
+    return G.__EpenVn == Session
 end
 
 ---------------------------------------------------------------------
@@ -44,7 +44,7 @@ end
 ---------------------------------------------------------------------
 if not (function() -- fungsi sendiri: tidak menambah jumlah local di chunk utama
     local API = "https://adminkeylua.vercel.app/api/license"
-    local FOLDER, FILE = "Alfian", "Alfian/license.key"
+    local FOLDER, FILE = "EpenVn", "EpenVn/license.key"
     local HttpService = game:GetService("HttpService")
     local Me = game:GetService("Players").LocalPlayer
     -- kode error dari server yang berarti lisensi memang tidak berlaku
@@ -53,7 +53,59 @@ if not (function() -- fungsi sendiri: tidak menambah jumlah local di chunk utama
         INVALID_SESSION = true, NOT_ACTIVATED = true, INVALID_KEY = true,
     }
     local canFile = type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
-    local License = { Token = nil, Info = nil }
+
+    -- Data lisensi dibagikan ke bagian lain script lewat Session.License
+    local License = { Token = nil, Info = nil, Offset = 0, ExpiresMs = nil, Fails = 0 }
+    Session.License = License
+
+    local function nowMs()
+        return DateTime.now().UnixTimestampMillis
+    end
+
+    local function isoMs(iso)
+        if type(iso) ~= "string" then return nil end
+        local ok, dt = pcall(DateTime.fromIsoDate, iso)
+        if ok and dt then return dt.UnixTimestampMillis end
+        return nil
+    end
+
+    -- Simpan data dari server. Waktu server dipakai sebagai acuan hitung mundur,
+    -- jadi jam perangkat yang salah tidak berpengaruh.
+    local function sync(data)
+        License.Token, License.Info = data.session_token, data.license
+        local serverMs = isoMs(data.server_time)
+        License.Offset = serverMs and (serverMs - nowMs()) or 0
+        if data.license.is_lifetime then
+            License.ExpiresMs = nil
+        else
+            License.ExpiresMs = isoMs(data.license.expires_at)
+        end
+    end
+
+    -- Sisa waktu dalam milidetik (nil = lifetime / tidak diketahui)
+    function License.Remaining()
+        if not License.ExpiresMs then return nil end
+        return math.max(0, License.ExpiresMs - (nowMs() + License.Offset))
+    end
+
+    function License.Format()
+        if License.Info and License.Info.is_lifetime then return "Lifetime" end
+        local ms = License.Remaining()
+        if not ms then return "-" end
+        local s = math.floor(ms / 1000)
+        local d, h = math.floor(s / 86400), math.floor((s % 86400) / 3600)
+        local m, sec = math.floor((s % 3600) / 60), s % 60
+        if d > 0 then return string.format("%d hari %02d:%02d:%02d", d, h, m, sec) end
+        return string.format("%02d:%02d:%02d", h, m, sec)
+    end
+
+    function License.FormatDate(iso)
+        local ok, text = pcall(function()
+            return DateTime.fromIsoDate(iso):FormatLocalTime("DD MMM YYYY HH:mm", "id-id")
+        end)
+        if ok and type(text) == "string" then return text end
+        return tostring(iso or "-")
+    end
 
     local function toast(title, text)
         pcall(function()
@@ -124,21 +176,46 @@ if not (function() -- fungsi sendiri: tidak menambah jumlah local di chunk utama
             platform = "Roblox",
         })
         if data then
-            License.Token, License.Info = data.session_token, data.license
+            sync(data)
             saveKey(key)
             return true
         end
         return false, code, msg
     end
 
-    -- Jendela input key sederhana. Return true kalau aktivasi berhasil.
+    local function shutdown(msg, forget)
+        if forget then forgetKey() end
+        toast("Lisensi", msg or "Lisensi tidak dapat diverifikasi")
+        local cleanup = Session.Cleanup
+        if cleanup then pcall(cleanup) end
+        if G.__EpenVn == Session then G.__EpenVn = nil end
+    end
+
+    -- Verifikasi ke server. Return: ok, pesan
+    function License.Verify()
+        local data, code, msg = call("/verify", { session_token = License.Token })
+        if data then
+            License.Fails = 0
+            sync(data)
+            return true
+        end
+        if STOP[code] then
+            shutdown(msg, true)
+            return false, msg
+        end
+        License.Fails = License.Fails + 1
+        if License.Fails >= 5 then shutdown(msg, false) end -- 5x gagal jaringan berturut-turut
+        return false, msg
+    end
+
+    -- Jendela input key bergaya glass ungu. Return true kalau aktivasi berhasil.
     local function askKey(firstMsg)
         local done = Instance.new("BindableEvent")
         local success = false
         local busy = false
 
         local gui = Instance.new("ScreenGui")
-        gui.Name = "EpenLicense"
+        gui.Name = "EpenVnLicense"
         gui.ResetOnSpawn = false
         gui.DisplayOrder = 1000
         gui.IgnoreGuiInset = true
@@ -152,45 +229,62 @@ if not (function() -- fungsi sendiri: tidak menambah jumlah local di chunk utama
             o.Parent = parent
             return o
         end
-        local PURPLE = Color3.fromRGB(124, 82, 230)
-        local MUTED = Color3.fromRGB(154, 148, 179)
+        local ACCENT = Color3.fromRGB(139, 92, 246)
+        local SOFT = Color3.fromRGB(196, 181, 253)
+        local TEXT = Color3.fromRGB(243, 239, 251)
+        local MUTED = Color3.fromRGB(167, 156, 199)
+        local BAD = Color3.fromRGB(248, 113, 113)
 
         local panel = make("Frame", {
-            Size = UDim2.fromOffset(320, 220), Position = UDim2.fromScale(0.5, 0.5),
-            AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Color3.fromRGB(20, 16, 32), BorderSizePixel = 0,
+            Size = UDim2.fromOffset(330, 230), Position = UDim2.fromScale(0.5, 0.5),
+            AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Color3.fromRGB(40, 24, 78),
+            BackgroundTransparency = 0.18, BorderSizePixel = 0,
         }, gui)
-        make("UICorner", { CornerRadius = UDim.new(0, 12) }, panel)
-        make("UIStroke", { Color = Color3.fromRGB(43, 37, 66), Thickness = 1 }, panel)
+        make("UICorner", { CornerRadius = UDim.new(0, 16) }, panel)
+        make("UIStroke", { Color = SOFT, Transparency = 0.55, Thickness = 1.2 }, panel)
+        make("UIGradient", {
+            Rotation = 125,
+            Color = ColorSequence.new(Color3.fromRGB(150, 110, 255), Color3.fromRGB(30, 14, 64)),
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.2),
+                NumberSequenceKeypoint.new(1, 0.05),
+            }),
+        }, panel)
 
         make("TextLabel", {
-            Size = UDim2.new(1, -60, 0, 24), Position = UDim2.fromOffset(20, 16), BackgroundTransparency = 1,
-            Text = "Aktifkan lisensi", Font = Enum.Font.GothamBold, TextSize = 18,
-            TextColor3 = Color3.fromRGB(236, 233, 245), TextXAlignment = Enum.TextXAlignment.Left,
+            Size = UDim2.new(1, -70, 0, 24), Position = UDim2.fromOffset(22, 18), BackgroundTransparency = 1,
+            Text = "Aktifkan lisensi", Font = Enum.Font.GothamBold, TextSize = 19,
+            TextColor3 = TEXT, TextXAlignment = Enum.TextXAlignment.Left,
         }, panel)
         local closeBtn = make("TextButton", {
-            Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -40, 0, 14), BackgroundTransparency = 1,
-            Text = "X", Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = MUTED,
+            Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -44, 0, 16), BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BackgroundTransparency = 0.88, Text = "X", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = SOFT,
         }, panel)
+        make("UICorner", { CornerRadius = UDim.new(1, 0) }, closeBtn)
         local status = make("TextLabel", {
-            Size = UDim2.new(1, -40, 0, 36), Position = UDim2.fromOffset(20, 46), BackgroundTransparency = 1,
+            Size = UDim2.new(1, -44, 0, 36), Position = UDim2.fromOffset(22, 52), BackgroundTransparency = 1,
             Text = firstMsg or "Masukkan license key Anda.", Font = Enum.Font.Gotham, TextSize = 13,
-            TextColor3 = firstMsg and Color3.fromRGB(248, 113, 113) or MUTED, TextWrapped = true,
+            TextColor3 = firstMsg and BAD or MUTED, TextWrapped = true,
             TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
         }, panel)
         local box = make("TextBox", {
-            Size = UDim2.new(1, -40, 0, 42), Position = UDim2.fromOffset(20, 92),
-            BackgroundColor3 = Color3.fromRGB(12, 10, 18), BorderSizePixel = 0,
+            Size = UDim2.new(1, -44, 0, 44), Position = UDim2.fromOffset(22, 98),
+            BackgroundColor3 = Color3.fromRGB(12, 6, 30), BackgroundTransparency = 0.35, BorderSizePixel = 0,
             Text = "", PlaceholderText = "EPEN-XXXX-XXXX-XXXX", PlaceholderColor3 = MUTED,
-            Font = Enum.Font.Code, TextSize = 16, TextColor3 = Color3.fromRGB(236, 233, 245),
-            ClearTextOnFocus = false,
+            Font = Enum.Font.Code, TextSize = 16, TextColor3 = TEXT, ClearTextOnFocus = false,
         }, panel)
-        make("UICorner", { CornerRadius = UDim.new(0, 8) }, box)
+        make("UICorner", { CornerRadius = UDim.new(0, 10) }, box)
+        make("UIStroke", { Color = SOFT, Transparency = 0.7, Thickness = 1 }, box)
         local btn = make("TextButton", {
-            Size = UDim2.new(1, -40, 0, 42), Position = UDim2.fromOffset(20, 150), BackgroundColor3 = PURPLE,
+            Size = UDim2.new(1, -44, 0, 44), Position = UDim2.fromOffset(22, 158), BackgroundColor3 = ACCENT,
             BorderSizePixel = 0, Text = "Aktifkan", Font = Enum.Font.GothamBold, TextSize = 15,
             TextColor3 = Color3.new(1, 1, 1), AutoButtonColor = true,
         }, panel)
-        make("UICorner", { CornerRadius = UDim.new(0, 8) }, btn)
+        make("UICorner", { CornerRadius = UDim.new(0, 10) }, btn)
+        make("UIGradient", {
+            Rotation = 90,
+            Color = ColorSequence.new(Color3.fromRGB(167, 139, 250), Color3.fromRGB(109, 40, 217)),
+        }, btn)
 
         box:GetPropertyChangedSignal("Text"):Connect(function()
             local up = box.Text:upper()
@@ -201,7 +295,7 @@ if not (function() -- fungsi sendiri: tidak menambah jumlah local di chunk utama
             if busy then return end
             local key = box.Text:gsub("%s+", ""):upper()
             if not key:match("^EPEN%-%w%w%w%w%-%w%w%w%w%-%w%w%w%w$") then
-                status.TextColor3 = Color3.fromRGB(248, 113, 113)
+                status.TextColor3 = BAD
                 status.Text = "Format key harus EPEN-XXXX-XXXX-XXXX."
                 return
             end
@@ -215,7 +309,7 @@ if not (function() -- fungsi sendiri: tidak menambah jumlah local di chunk utama
                     success = true
                     done:Fire()
                 else
-                    status.TextColor3 = Color3.fromRGB(248, 113, 113)
+                    status.TextColor3 = BAD
                     status.Text = msg or "Aktivasi gagal."
                     btn.Text = "Aktifkan"
                     busy = false
@@ -247,41 +341,23 @@ if not (function() -- fungsi sendiri: tidak menambah jumlah local di chunk utama
     if not licensed then return false end
 
     local info = License.Info or {}
-    local until_ = "Lifetime"
-    if not info.is_lifetime then
-        until_ = tostring(info.expires_at or "-")
-        pcall(function()
-            until_ = DateTime.fromIsoDate(until_):FormatLocalTime("DD MMM YYYY HH:mm", "id-id")
-        end)
-        until_ = "Berlaku sampai " .. until_
+    if info.is_lifetime then
+        toast("Lisensi aktif", "Lifetime")
+    else
+        toast("Lisensi aktif", "Berlaku sampai " .. License.FormatDate(info.expires_at) .. " (sisa " .. License.Format() .. ")")
     end
-    toast("Lisensi aktif", until_)
 
-    -- Verifikasi berkala ke server (status asli selalu dari database)
+    -- Verifikasi berkala: tiap 60 detik, dan segera setelah waktu habis
     task.spawn(function()
-        local fails = 0
-        while G.__Alfian == Session do
-            task.wait(60)
-            if G.__Alfian ~= Session then break end
-            local data, code, msg = call("/verify", { session_token = License.Token })
-            if data then
-                fails = 0
-                License.Token, License.Info = data.session_token, data.license
-            else
-                local definite = STOP[code] == true
-                local stop = definite
-                if not definite then
-                    fails = fails + 1
-                    stop = fails >= 5 -- 5x gagal jaringan berturut-turut
-                end
-                if stop then
-                    if definite then forgetKey() end
-                    toast("Lisensi", msg or "Lisensi tidak dapat diverifikasi")
-                    local cleanup = Session.Cleanup
-                    if cleanup then pcall(cleanup) end
-                    if G.__Alfian == Session then G.__Alfian = nil end
-                    break
-                end
+        local last = os.clock()
+        while G.__EpenVn == Session do
+            task.wait(2)
+            if G.__EpenVn ~= Session then break end
+            local rem = License.Remaining()
+            local elapsed = os.clock() - last
+            if elapsed >= 60 or (rem and rem <= 0 and elapsed >= 5) then
+                last = os.clock()
+                License.Verify()
             end
         end
     end)
@@ -355,7 +431,7 @@ local Misc = {
     UpHeld = false,   -- tombol ▲ di layar ditahan
     DownHeld = false, -- tombol ▼ di layar ditahan
     CustomName = true,          -- watermark nama (selalu aktif, mati hanya saat script ditutup)
-    NameText = "Fian792",  -- teks watermark
+    NameText = "Epen6969",  -- teks watermark
 }
 
 -- Auto Clear World
@@ -444,12 +520,12 @@ end
 --      SEBELUM UI dibuat, jadi tombol & slider langsung tampil sesuai config.
 --   2. Tiap 3 detik pengaturan sekarang dibandingkan dengan yang terakhir disimpan.
 --      Ada yang berubah -> langsung disimpan (auto save).
---   3. File per akun: workspace/Alfian/config_<UserId>.json
+--   3. File per akun: workspace/EpenVn/config_<UserId>.json
 --   Yang tidak disimpan: tombol jalan (Auto Farm / Clear / Farmer / Chat), fly & inf jump.
 local Config = {
     AutoSave = true,
     Paused = false,      -- true setelah reset (supaya file tidak dibuat lagi)
-    Folder = "Alfian",
+    Folder = "EpenVn",
     Data = {},           -- isi file saat execute
     List = {},           -- tabel pengaturan yang disimpan
     LastJson = nil,
@@ -921,7 +997,7 @@ local function sendSetTile(layer, x, y, id)
     if Refs.SetTile then
         local ok, err = pcall(Refs.SetTile, layer, x, y, id, false, false)
         if ok then return true end
-        warn("[Fian792] setTile game gagal, pakai remote langsung: " .. tostring(err))
+        warn("[Epen6969] setTile game gagal, pakai remote langsung: " .. tostring(err))
     end
     if NetOk and type(Net) == "table" and type(Net.tile) == "table" then
         -- sama seperti game: layer 1 = fg, 2 = bg
@@ -1608,7 +1684,7 @@ local function setRunningVisual()
     if UI.FarmToggle then pcall(function() UI.FarmToggle:Set(State.Running) end) end
     if UI.GridStart then
         UI.GridStart.Text = State.Running and "STOP" or "START"
-        UI.GridStart.BackgroundColor3 = State.Running and Color3.fromRGB(200, 60, 60) or Color3.fromRGB(46, 160, 90)
+        UI.GridStart.BackgroundColor3 = State.Running and Color3.fromRGB(220, 70, 90) or Color3.fromRGB(139, 92, 246)
     end
 end
 
@@ -2807,7 +2883,7 @@ local function startClear()
     task.spawn(function()
         local ok, e = pcall(clearLoop)
         if not ok then
-            warn("[Fian792] Auto Clear error: " .. tostring(e))
+            warn("[Epen6969] Auto Clear error: " .. tostring(e))
             if Clear.Running then stopClear("Error: " .. tostring(e)) end
         end
     end)
@@ -3151,7 +3227,7 @@ local function startFarmer()
     task.spawn(function()
         local ok, e = pcall(farmerLoop)
         if not ok then
-            warn("[Fian792] Farmer error: " .. tostring(e))
+            warn("[Epen6969] Farmer error: " .. tostring(e))
             if Farmer.Running then stopFarmer("Error: " .. tostring(e)) end
         end
     end)
@@ -3292,7 +3368,7 @@ task.spawn(function()
 end)
 
 ---------------------------------------------------------------------
--- WATERMARK NAMA FIAN792 (hanya di layar sendiri)
+-- WATERMARK NAMA Epen6969 (hanya di layar sendiri)
 ---------------------------------------------------------------------
 -- Nama asli (huruf gambar "BitmapText") disembunyikan, diganti teks beranimasi:
 -- warna gradient mengalir + denyut halus. Pemain lain tetap melihat nama asli.
@@ -3327,7 +3403,7 @@ end
 
 local function makeLabel(holder, size, isTag)
     local lb = Instance.new("TextLabel")
-    lb.Name = "Fian792Name"
+    lb.Name = "Epen6969Name"
     lb.BackgroundTransparency = 1
     lb.Font = NAME_FONT
     lb.TextSize = size
@@ -3465,7 +3541,7 @@ local GRID_RADIUS = 2
 local CELL = 38
 local GAP = 4
 
-local GridGui = newScreenGui("Fian792Grid")
+local GridGui = newScreenGui("Epen6969Grid")
 
 local side = GRID_RADIUS * 2 + 1
 local gridSize = side * CELL + (side - 1) * GAP
@@ -3473,12 +3549,22 @@ local gridSize = side * CELL + (side - 1) * GAP
 local Panel = Instance.new("Frame")
 Panel.Size = UDim2.fromOffset(gridSize + 20, gridSize + 96)
 Panel.Position = UDim2.fromOffset(20, 80)
-Panel.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+Panel.BackgroundColor3 = Color3.fromRGB(40, 24, 78)
+Panel.BackgroundTransparency = 0.18
 Panel.BorderSizePixel = 0
 Panel.Parent = GridGui
-Instance.new("UICorner", Panel).CornerRadius = UDim.new(0, 10)
+Instance.new("UICorner", Panel).CornerRadius = UDim.new(0, 14)
 local pStroke = Instance.new("UIStroke", Panel)
-pStroke.Color = Color3.fromRGB(70, 70, 90)
+pStroke.Color = Color3.fromRGB(196, 181, 253)
+pStroke.Transparency = 0.55
+pStroke.Thickness = 1.2
+local pGrad = Instance.new("UIGradient", Panel)
+pGrad.Rotation = 125
+pGrad.Color = ColorSequence.new(Color3.fromRGB(150, 110, 255), Color3.fromRGB(30, 14, 64))
+pGrad.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.2),
+    NumberSequenceKeypoint.new(1, 0.05),
+})
 
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -40, 0, 28)
@@ -3487,20 +3573,21 @@ Title.BackgroundTransparency = 1
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 13
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.TextColor3 = Color3.fromRGB(235, 235, 245)
+Title.TextColor3 = Color3.fromRGB(243, 239, 251)
 Title.Text = "Grid Tile"
 Title.Parent = Panel
 
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.fromOffset(24, 24)
 CloseBtn.Position = UDim2.new(1, -30, 0, 6)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.BackgroundTransparency = 0.88
 CloseBtn.Text = "X"
 CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.TextSize = 12
-CloseBtn.TextColor3 = Color3.new(1, 1, 1)
+CloseBtn.TextColor3 = Color3.fromRGB(196, 181, 253)
 CloseBtn.Parent = Panel
-Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(1, 0)
 CloseBtn.MouseButton1Click:Connect(function()
     GridGui.Enabled = false
 end)
@@ -3511,9 +3598,9 @@ GridHolder.Position = UDim2.fromOffset(10, 36)
 GridHolder.BackgroundTransparency = 1
 GridHolder.Parent = Panel
 
-local COLOR_OFF = Color3.fromRGB(48, 48, 60)
-local COLOR_ON = Color3.fromRGB(46, 160, 90)
-local COLOR_ME = Color3.fromRGB(60, 110, 220)
+local COLOR_OFF = Color3.fromRGB(76, 56, 122)
+local COLOR_ON = Color3.fromRGB(139, 92, 246)
+local COLOR_ME = Color3.fromRGB(217, 70, 239)
 local CellButtons = {}
 
 local function paintCell(key)
@@ -3572,7 +3659,7 @@ ClearBtn.Position = UDim2.new(0, 10, 1, -22)
 ClearBtn.BackgroundTransparency = 1
 ClearBtn.Font = Enum.Font.Gotham
 ClearBtn.TextSize = 12
-ClearBtn.TextColor3 = Color3.fromRGB(180, 180, 195)
+ClearBtn.TextColor3 = Color3.fromRGB(196, 181, 253)
 ClearBtn.Text = "Bersihkan pilihan"
 ClearBtn.Parent = Panel
 ClearBtn.MouseButton1Click:Connect(function()
@@ -3619,7 +3706,7 @@ task.spawn(function()
 end)
 
 -- Tombol ▲/▼ untuk Fly (muncul saat Fly aktif)
-local FlyPad = newScreenGui("Fian792FlyPad")
+local FlyPad = newScreenGui("Epen6969FlyPad")
 UI.FlyPad = FlyPad
 
 local function flyButton(text, yOffset, onHold)
@@ -3627,8 +3714,8 @@ local function flyButton(text, yOffset, onHold)
     b.Size = UDim2.fromOffset(64, 64)
     b.AnchorPoint = Vector2.new(1, 0.5)
     b.Position = UDim2.new(1, -24, 0.5, yOffset)
-    b.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    b.BackgroundTransparency = 0.2
+    b.BackgroundColor3 = Color3.fromRGB(40, 24, 78)
+    b.BackgroundTransparency = 0.25
     b.Text = text
     b.Font = Enum.Font.GothamBold
     b.TextSize = 28
@@ -3637,7 +3724,8 @@ local function flyButton(text, yOffset, onHold)
     b.Parent = FlyPad
     Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
     local st = Instance.new("UIStroke", b)
-    st.Color = Color3.fromRGB(90, 90, 120)
+    st.Color = Color3.fromRGB(196, 181, 253)
+    st.Transparency = 0.45
     st.Thickness = 2
     -- dilepas saat jari diangkat (walau sudah geser keluar), supaya tidak nyangkut
     local heldInput = nil
@@ -3665,24 +3753,52 @@ flyButton("▼", 40, function(v) Misc.DownHeld = v end)
 ---------------------------------------------------------------------
 -- UI WINDUI
 ---------------------------------------------------------------------
-local Window = WindUI:CreateWindow({
-    Title = "Fian792",
-    Icon = "sprout",
-    Author = "v1.1.0 | Beta Tester",
-    Folder = "Alfian",
-    Size = UDim2.fromOffset(640, 380),
-    Theme = "Dark",
-    Transparent = true,
-    SideBarWidth = 150,
-})
+-- Tema glassmorphism ungu (kalau versi WindUI tidak mendukung, otomatis pakai "Dark")
+local THEME_NAME = "Dark"
 pcall(function()
-    Window:EditOpenButton({ Title = "Fian792", Icon = "sprout", Draggable = true })
+    WindUI:AddTheme({
+        Name = "EpenGlass",
+        Accent = Color3.fromHex("#8b5cf6"),
+        Dialog = Color3.fromHex("#1a1033"),
+        Outline = Color3.fromHex("#c4b5fd"),
+        Text = Color3.fromHex("#f3effb"),
+        Placeholder = Color3.fromHex("#a79cc7"),
+        Background = Color3.fromHex("#150c2b"),
+        Button = Color3.fromHex("#3b2a6b"),
+        Icon = Color3.fromHex("#c4b5fd"),
+    })
+    THEME_NAME = "EpenGlass"
+end)
+pcall(function() WindUI.TransparencyValue = 0.22 end) -- kaca lebih tembus pandang
+
+local Window = WindUI:CreateWindow({
+    Title = "Epen6969",
+    Icon = "sprout",
+    Author = "v1.1.0  |  EpenVn",
+    Folder = "EpenVn",
+    Size = UDim2.fromOffset(660, 400),
+    Theme = THEME_NAME,
+    Transparent = true,
+    Resizable = true,
+    ScrollBarEnabled = true,
+    SideBarWidth = 160,
+})
+pcall(function() WindUI:SetTheme(THEME_NAME) end)
+pcall(function()
+    Window:EditOpenButton({
+        Title = "Epen6969",
+        Icon = "sprout",
+        CornerRadius = UDim.new(1, 0),
+        StrokeThickness = 2,
+        Color = ColorSequence.new(Color3.fromHex("#c4b5fd"), Color3.fromHex("#6d28d9")),
+        Draggable = true,
+    })
 end)
 
 -- Kalau 1 elemen error, tab lain tetap dibuat
 local function safe(fn)
     local ok, err = pcall(fn)
-    if not ok then warn("[Fian792] UI error: " .. tostring(err)) end
+    if not ok then warn("[Epen6969] UI error: " .. tostring(err)) end
 end
 
 -- Sidebar dikelompokkan: grup utama bisa dibuka / ditutup (isinya tab-tab)
@@ -4471,7 +4587,7 @@ do (function() -- fungsi sendiri: variabel di dalam tidak ikut batas 200 local
         Guard.BackText = nil
         task.spawn(function()
             local ok, err = pcall(resumeAll, saved, token)
-            if not ok then warn("[Fian792] Penjaga lanjut error: " .. tostring(err)) end
+            if not ok then warn("[Epen6969] Penjaga lanjut error: " .. tostring(err)) end
             if Guard.Token == token and Guard.Mode == "back" then
                 Guard.Mode, Guard.Saved, Guard.BackText = "idle", nil, nil
             end
@@ -4684,7 +4800,7 @@ do (function() -- fungsi sendiri: variabel di dalam tidak ikut batas 200 local
         while alive() do
             local here = (Guard.Mode ~= "away" and Guard.Mode ~= "out") and playersHere() or {}
             local ok, err = pcall(Guard.tick, here)
-            if not ok then warn("[Fian792] Penjaga error: " .. tostring(err)) end
+            if not ok then warn("[Epen6969] Penjaga error: " .. tostring(err)) end
             Guard.updateStatus(here)
             task.wait(0.5)
         end
@@ -5343,10 +5459,119 @@ safe(function()
 end)
 
 ---------------------------------------------------------------------
+-- TAB LISENSI + TIMER DI LAYAR (sisa waktu key, acuan waktu server)
+---------------------------------------------------------------------
+do (function() -- fungsi sendiri: variabel di dalam tidak ikut batas 200 local
+    local Lic = Session.License
+    if not Lic then return end
+
+    local function detailText()
+        local info = Lic.Info or {}
+        local lines = { "Sisa waktu: " .. Lic.Format() }
+        if info.is_lifetime then
+            lines[#lines + 1] = "Kedaluwarsa: tidak pernah"
+        else
+            lines[#lines + 1] = "Kedaluwarsa: " .. Lic.FormatDate(info.expires_at)
+        end
+        lines[#lines + 1] = "Diaktivasi: " .. Lic.FormatDate(info.activated_at)
+        lines[#lines + 1] = "Perangkat: " .. tostring(info.devices_used or "-") .. " dari " .. tostring(info.max_devices or "-")
+        return table.concat(lines, "\n")
+    end
+
+    local tab = makeTab("Lisensi", "key-round", "setel")
+
+    safe(function()
+        UI.LicInfo = tab:Paragraph({ Title = "Status lisensi", Desc = detailText() })
+    end)
+
+    local ctl = box(tab, "Kontrol", true)
+
+    safe(function()
+        ctl:Toggle({
+            Title = "Timer di layar",
+            Desc = "Tampilkan sisa waktu key di atas layar",
+            Value = true,
+            Callback = function(on)
+                if UI.LicChip then UI.LicChip.Enabled = on end
+            end,
+        })
+    end)
+
+    safe(function()
+        ctl:Button({
+            Title = "Verifikasi sekarang",
+            Desc = "Cek ulang status key ke server",
+            Callback = function()
+                task.spawn(function()
+                    local ok, msg = Lic.Verify()
+                    notify("Lisensi", ok and "Lisensi valid" or (msg or "Verifikasi gagal"), 3)
+                end)
+            end,
+        })
+    end)
+
+    -- Chip kecil bergaya glass di tengah atas layar
+    local gui = newScreenGui("EpenVnLicenseChip")
+    gui.Enabled = true
+    UI.LicChip = gui
+
+    local chip = Instance.new("Frame")
+    chip.AnchorPoint = Vector2.new(0.5, 0)
+    chip.Position = UDim2.new(0.5, 0, 0, 8)
+    chip.Size = UDim2.fromOffset(190, 28)
+    chip.BackgroundColor3 = Color3.fromRGB(40, 24, 78)
+    chip.BackgroundTransparency = 0.25
+    chip.BorderSizePixel = 0
+    chip.Parent = gui
+    Instance.new("UICorner", chip).CornerRadius = UDim.new(1, 0)
+    local stroke = Instance.new("UIStroke", chip)
+    stroke.Color = Color3.fromRGB(196, 181, 253)
+    stroke.Transparency = 0.55
+    local grad = Instance.new("UIGradient", chip)
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new(Color3.fromRGB(150, 110, 255), Color3.fromRGB(40, 20, 90))
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.fromScale(1, 1)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 13
+    lbl.TextColor3 = Color3.fromRGB(243, 239, 251)
+    lbl.Parent = chip
+
+    local lastChip, lastInfo
+    task.spawn(function()
+        while alive() do
+            local text = Lic.Format()
+            local chipText = "Lisensi  " .. text
+            if chipText ~= lastChip then
+                lastChip = chipText
+                lbl.Text = chipText
+                -- peringatan warna saat sisa waktu menipis
+                local rem = Lic.Remaining()
+                if rem and rem < 60 * 1000 then
+                    lbl.TextColor3 = Color3.fromRGB(248, 113, 113)
+                elseif rem and rem < 10 * 60 * 1000 then
+                    lbl.TextColor3 = Color3.fromRGB(251, 191, 36)
+                else
+                    lbl.TextColor3 = Color3.fromRGB(243, 239, 251)
+                end
+            end
+            local detail = detailText()
+            if detail ~= lastInfo and UI.LicInfo then
+                lastInfo = detail
+                pcall(function() UI.LicInfo:SetDesc(detail) end)
+            end
+            task.wait(1)
+        end
+    end)
+end)() end
+
+---------------------------------------------------------------------
 -- INIT
 ---------------------------------------------------------------------
 task.spawn(function()
-    reconnect("Fian792 v1")
+    reconnect("Epen6969 v1")
     -- Penjaga dari config dinyalakan setelah data pemain ketemu
     -- (supaya pemain yang sudah ada dicatat dulu)
     if Config.saved("Penjaga", "On") == true and alive() then
@@ -5401,5 +5626,6 @@ Session.Cleanup = function()
     end
     pcall(function() GridGui:Destroy() end)
     pcall(function() FlyPad:Destroy() end)
+    pcall(function() if UI.LicChip then UI.LicChip:Destroy() end end)
     pcall(function() Window:Destroy() end)
 end
